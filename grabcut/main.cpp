@@ -9,6 +9,9 @@
 
 #include "graph.h"
 #define NUM_CLUS 1
+#define LAMBDA 50
+
+typedef Graph<int, int, int> GraphType;
 
 int checkFile(cv::Mat& file, cv::String& filename)
 {
@@ -21,64 +24,99 @@ int checkFile(cv::Mat& file, cv::String& filename)
 	return 0;
 }
 
-int getMaskedPoints(cv::String& fn, cv::Mat& img, cv::Mat& mask, cv::Mat& mask_points)
+int getMask(cv::String& fn, cv::Mat& img, cv::Mat& mask)
 {
 	mask = cv::imread(fn.c_str(), cv::IMREAD_GRAYSCALE);
 	if (checkFile(mask, fn) < 0)
 		return -1;
+	
+	mask = mask < 255; // Turn to binary mask
+	cv::bitwise_and(img, mask, mask); // Get only the seeded pixels
 
-	// Turn to binary mask
-	mask = mask < 255;
+	return 0;
+}
 
-	// Get only the seeded pixels
-	cv::bitwise_and(img, mask, mask);
-
+void estGMM(cv::Mat& mask, cv::Mat& likelihoods)
+{
 	// Get points
-	mask_points = cv::Mat::zeros(cv::countNonZero(mask), 1, CV_32SC1);
+	cv::Mat points = cv::Mat::zeros(cv::countNonZero(mask), 1, CV_32SC1);
 	int ctr = 0;
 	for (int i = 0; i < mask.rows; i++) {
 		for (int j = 0; j < mask.cols; j++) {
 			if (mask.at<uchar>(i, j) > 0) {
-				mask_points.at<int>(ctr) = mask.at<uchar>(i, j);
+				points.at<int>(ctr) = mask.at<uchar>(i, j);
 				ctr++;
 			}
 		}
 	}
-	return 0;
-}
 
-void estGMM(cv::Mat& points, cv::Mat& likelihoods)
-{
 	cv::Ptr<cv::ml::EM> mdl = cv::ml::EM::create();
 	mdl->setClustersNumber(NUM_CLUS);
 	mdl->trainEM(points, likelihoods);
 }
 
-// For checking
-int outputData(cv::Mat means, cv::Mat weights, std::vector<cv::Mat> cov)
+void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed, 
+				cv::Mat& fg_mask, cv::Mat& bg_mask, cv::Mat& fg_prob, cv::Mat& bg_prob)
 {
-	// Mean
-	std::cout << "MEANS" << std::endl;
-	for (int i = 0; i < NUM_CLUS; i++)
-		std::cout << "\t" << means.at<double>(i) << std::endl;
+	int nrows = img.rows;
+	int ncols = img.cols;
 
-	// Sigma
-	std::cout << "\n\nSIGMAS " << std::endl;
-	for (int i = 0; i < NUM_CLUS; i++)
-		std::cout << "\t" << cov[i].at<double>(0) << std::endl;
+	// Create the graph
+	// Add the nodes
+	for (int i = 0; i < nrows*ncols; i++)
+		g->add_node();
 
-	// Weights
-	std::cout << "\n\nWEIGHTS " << std::endl;
-	for (int i = 0; i < NUM_CLUS; i++)
-		std::cout << "\t" << weights.at<double>(i) << std::endl;
+	// Add [n-links = e(-diff)] - will be the same for every graph
+	for (int j = 0; j < ncols; j++) { // across cols
+		for (int i = 1; i < nrows; i++) {
+			int diff = abs((int)img.at<uchar>(i - 1, j) - (int)img.at<uchar>(i, j));
+			double beta = pow(2 * pow(diff, 2), -1);
+			double weight = diff > 0 ? LAMBDA*exp(-beta*(diff)) : 0;
+			g->add_edge((i - 1)*ncols + j, i*ncols + j, weight, weight);
+		}
+	}
+	for (int i = 0; i < nrows; i++) { // across rows
+		for (int j = 1; j < ncols; j++) {
+			int diff = abs((int)img.at<uchar>(i, j - 1) - (int)img.at<uchar>(i, j));
+			double beta = pow(2 * pow(diff, 2), -1);
+			double weight = diff > 0 ? LAMBDA*exp(-beta*diff) : 0;
+			g->add_edge(i*ncols + (j - 1), i*ncols + j, weight, weight);
+		}
+	}
+	// Add t-links - changes depending on the mask
+	int pidx = 0;
+	for (int i = 0; i < nrows; i++) {
+		for (int j = 0; j < ncols; j++) {
+			// Make sure seeded values won't be cut
+			if (fg_seed.at<uchar>(i, j) > 0)
+				g->add_tweights(i*ncols + j, 1000, 0);
+			else if (fg_mask.at<uchar>(i, j) > 0) {
+				g->add_tweights(i*ncols + j, fg_prob.at<double>(pidx), 0);
+			}
+			if (fg_mask.at<uchar>(i, j) > 0)
+				pidx++;
+		}
+	}
+	pidx = 0;
+	for (int i = 0; i < nrows; i++) {
+		for (int j = 0; j < ncols; j++) {
+			// Make sure seeded values won't be cut
+			if (bg_seed.at<uchar>(i, j) > 0)
+				g->add_tweights(i*ncols + j, 0, 1000);
+			else if (bg_mask.at<uchar>(i, j) > 0)
+				g->add_tweights(i*ncols + j, bg_prob.at<double>(pidx), 0);
+			if (bg_mask.at<uchar>(i, j) > 0)
+				pidx++;
+		}
+	}
 
-	return 0;
+	double flow = g->maxflow();
+	std::cout << "Flow is: " << flow << std::endl;
 }
 
 
 int main(int argc, char** argv)
 {
-	typedef Graph<int, int, int> GraphType;
 	// Image name
 	cv::String imageName = "../samples/noise_blur_00.png";
 
@@ -88,61 +126,46 @@ int main(int argc, char** argv)
 		return -1;
 	int nrows = img.rows;
 	int ncols = img.cols;
+	GraphType *g = new GraphType(/*estimated # of nodes*/ nrows*ncols, /*estimated # of edges*/ nrows*ncols * 3);
 
 	// Foreground data
 	cv::String fgName = "../samples/noise_blur_00_fg.bmp";
-	cv::Mat fg_mask, fg_points;
-	getMaskedPoints(fgName, img, fg_mask, fg_points);
+	cv::Mat fg_mask, fg_likelihoods;
+	getMask(fgName, img, fg_mask);
+
 	// Background data
 	cv::String bgName = "../samples/noise_blur_00_bg.bmp";
-	cv::Mat bg_mask, bg_points;
-	getMaskedPoints(bgName, img, bg_mask, bg_points);
+	cv::Mat bg_mask, bg_likelihoods;
+	getMask(bgName, img, bg_mask);
 	
-	// Foreground GMM
-	cv::Mat fg_likelihoods;
-	estGMM(fg_points, fg_likelihoods);
-	//Backvround GMM
-	cv::Mat bg_likelihoods;
-	estGMM(bg_points, bg_likelihoods);
+	int iter = 0;
+	cv::Mat new_fg_mask = fg_mask.clone();
+	cv::Mat new_bg_mask = bg_mask.clone();
 
-	// Create the graph
-	int num_nodes = nrows*ncols;
-	GraphType *g = new GraphType(/*estimated # of nodes*/ num_nodes, /*estimated # of edges*/ num_nodes *3);
-	// Add the nodes
-	for (int i = 0; i < num_nodes; i++)
-		g->add_node();
+	while (iter <= 1) {
+		estGMM(new_fg_mask, fg_likelihoods);
+		estGMM(new_bg_mask, bg_likelihoods);
 
-	// Add t-links
-	for (int i = 0; i < nrows; i++) {
-		for (int j = 0; j < ncols; j++) {
-			if (fg_mask.at<uchar>(i, j) > 0)
-				g->add_tweights(i*ncols + j, 1000, 0);
+		createGraph(g, img, fg_mask, bg_mask, new_fg_mask, new_bg_mask, fg_likelihoods, bg_likelihoods);
+
+		// Reset the masks
+		new_fg_mask = cv::Mat::zeros(nrows, ncols, CV_8UC1);
+		new_bg_mask = cv::Mat::zeros(nrows, ncols, CV_8UC1);
+		for (int i = 0; i < nrows; i++) {
+			for (int j = 0; j < ncols; j++) {
+				if (g->what_segment(i*ncols + j) == GraphType::SOURCE)
+					new_fg_mask.at<uchar>(i, j) = 1;
+				else
+					new_bg_mask.at<uchar>(i, j) = 1;
+			}
 		}
-	}
-	for (int i = 0; i < nrows; i++) {
-		for (int j = 0; j < ncols; j++) {
-			if (bg_mask.at<uchar>(i, j) > 0)
-				g->add_tweights(i*ncols + j, 0, 1000);
-		}
+
+		iter++;
+		g->reset(); // WITHIN THE LOOP!!
 	}
 
-	// add [n-links = e(-diff)] across cols
-	for (int j = 0; j < ncols; j++) {
-		for (int i = 1; i < nrows; i++) {
-			int weight = exp(-(abs(img.at<uchar>(i-1, j) - img.at<uchar>(i, j))));
-			g->add_edge((i-1)*ncols + j, i*ncols + j, weight, weight);
-		}
-	}
-	// add [n-links = e(-diff)] across rows
-	for (int i = 0; i < nrows; i++) {
-		for (int j = 1; j < ncols; j++) {
-			double weight = exp(-abs((int)img.at<uchar>(i, j-1) - (int)img.at<uchar>(i, j)));
-			g->add_edge(i*ncols + (j-1), i*ncols + j, weight, weight);
-		}
-	}
 
-	double flow = g->maxflow();
-
+	// Checking
 	cv::Mat finalImg = cv::Mat::zeros(nrows, ncols, CV_8UC1);
 	for (int i = 0; i < nrows; i++)
 		for (int j = 0; j < ncols; j++)
@@ -153,6 +176,7 @@ int main(int argc, char** argv)
 	cv::imshow("Display window", finalImg);
 
 
+	delete g;
 	cv::waitKey(0);
 	return 0;
 }
