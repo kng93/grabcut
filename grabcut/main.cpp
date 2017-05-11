@@ -8,13 +8,15 @@
 //#include "opencv2/imgproc/imgproc.hpp"
 
 #include "graph.h"
-#define NUM_CLUS 2 // Number of clusters for GMM Estimation
-#define LAMBDA 50 // Graph weight parameter
+#define NUM_CLUS_FG 2 // Number of clusters for fg GMM Estimation
+#define NUM_CLUS_BG 2 // Number of clusters for bg GMM Estimation
+#define LAMBDA 5 // Graph weight parameter
 #define KEEP 10000000 // Thick edge weight
+#define ITER 2
 
 typedef Graph<int, int, int> GraphType;
 double beta;
-cv::String fileBase = "../samples/pigfoot";
+cv::String fileBase = "../samples/noise_blur_12";
 
 /*
 Calculate beta (graph weight parameter)
@@ -75,7 +77,7 @@ int getMask(cv::String& fn, cv::Mat& img, cv::Mat& mask)
 /*
 Given the image and mask, change points into a 1D matrix to be passed for GMM training
 */
-void estGMM(cv::Mat& mask, cv::Mat& img, cv::Mat& likelihoods)
+void estGMM(cv::Mat& mask, cv::Mat& img, cv::Mat& likelihoods, int num_clus)
 {
 	// Get points
 	cv::Mat points = cv::Mat::zeros(cv::countNonZero(mask), 1, CV_32SC1);
@@ -90,7 +92,7 @@ void estGMM(cv::Mat& mask, cv::Mat& img, cv::Mat& likelihoods)
 	}
 
 	cv::Ptr<cv::ml::EM> mdl = cv::ml::EM::create();
-	mdl->setClustersNumber(NUM_CLUS);
+	mdl->setClustersNumber(num_clus);
 	mdl->trainEM(points, likelihoods);
 }
 
@@ -102,6 +104,7 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 {
 	int nrows = img.rows;
 	int ncols = img.cols;
+	double energy = 0;
 
 	// Create the graph
 	// Add the nodes
@@ -113,8 +116,8 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 		for (int i = 1; i < nrows; i++) {
 			int diff = abs((int)img.at<uchar>(i - 1, j) - (int)img.at<uchar>(i, j));
 			double weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
-			if (weight < 0)
-				std::cout << "Weight: " << weight << std::endl;
+			//std::cout << "weight: " << weight << std::endl;
+			energy += 2*weight;
 			g->add_edge((i - 1)*ncols + j, i*ncols + j, weight, weight);
 		}
 	}
@@ -123,6 +126,7 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 			int diff = abs((int)img.at<uchar>(i, j - 1) - (int)img.at<uchar>(i, j));
 			double weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
 			g->add_edge(i*ncols + (j - 1), i*ncols + j, weight, weight);
+			energy += 2*weight;
 		}
 	}
 	// Add t-links - changes depending on the mask
@@ -130,10 +134,15 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 	for (int i = 0; i < nrows; i++) {
 		for (int j = 0; j < ncols; j++) {
 			// Make sure seeded values won't be cut
-			if (fg_seed.at<uchar>(i, j) > 0)
+			if (fg_seed.at<uchar>(i, j) > 0) {
 				g->add_tweights(i*ncols + j, KEEP, 0);
-			else if (fg_mask.at<uchar>(i, j) > 0)
+				energy += KEEP;
+			} 
+			else if (fg_mask.at<uchar>(i, j) > 0) {
+				//std::cout << "fg: " << -fg_prob.at<double>(pidx) << std::endl;
 				g->add_tweights(i*ncols + j, -fg_prob.at<double>(pidx), 0);
+				energy += -fg_prob.at<double>(pidx);
+			}
 			if (fg_mask.at<uchar>(i, j) > 0)
 				pidx++;
 		}
@@ -142,17 +151,22 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 	for (int i = 0; i < nrows; i++) {
 		for (int j = 0; j < ncols; j++) {
 			// Make sure seeded values won't be cut
-			if (bg_seed.at<uchar>(i, j) > 0)
+			if (bg_seed.at<uchar>(i, j) > 0) {
 				g->add_tweights(i*ncols + j, 0, KEEP);
-			else if (bg_mask.at<uchar>(i, j) > 0)
+				energy += KEEP;
+			}
+			else if (bg_mask.at<uchar>(i, j) > 0) {
 				g->add_tweights(i*ncols + j, 0, -bg_prob.at<double>(pidx));
+				energy += -bg_prob.at<double>(pidx);
+			}
 			if (bg_mask.at<uchar>(i, j) > 0)
 				pidx++;
 		}
 	}
 
 	double flow = g->maxflow();
-	std::cout << "Flow is: " << flow << std::endl;
+	std::cout.precision(17);
+	std::cout << "Flow is: " << flow << ", Energy is: " << energy << std::endl;
 }
 
 
@@ -184,11 +198,11 @@ int main(int argc, char** argv)
 	cv::Mat new_fg_mask = fg_mask.clone();
 	cv::Mat new_bg_mask = bg_mask.clone();
 
-	while (iter <= 2) {
+	while (iter <= ITER) {
 		std::cout << "RUN #" << iter << "\n=========================\n";
 		std::cout << "Estimating GMMs\n";
-		estGMM(new_fg_mask, img, fg_likelihoods);
-		estGMM(new_bg_mask, img, bg_likelihoods);
+		estGMM(new_fg_mask, img, fg_likelihoods, NUM_CLUS_FG);
+		estGMM(new_bg_mask, img, bg_likelihoods, NUM_CLUS_BG);
 
 		std::cout << "Creating Graph\n";
 		createGraph(g, img, fg_mask, bg_mask, new_fg_mask, new_bg_mask, fg_likelihoods, bg_likelihoods);
@@ -214,7 +228,7 @@ int main(int argc, char** argv)
 	cv::Mat finalImg = cv::Mat::zeros(nrows, ncols, CV_8UC1);
 	for (int i = 0; i < nrows; i++)
 		for (int j = 0; j < ncols; j++)
-			finalImg.at<uchar>(i, j) = (g->what_segment(i*ncols + j) == GraphType::SOURCE) ? 255 : 0;		
+			finalImg.at<uchar>(i, j) = new_fg_mask.at<uchar>(i, j) ? 255 : 0;
 
 	// Display image
 	cv::namedWindow("Display window", cv::WINDOW_AUTOSIZE); // Create a window for display.
