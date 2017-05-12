@@ -5,7 +5,6 @@
 #include <opencv2/core.hpp>
 #include <opencv2/ml.hpp>
 #include "opencv2/highgui/highgui.hpp"
-//#include "opencv2/imgproc/imgproc.hpp"
 
 #include "graph.h"
 #define NUM_CLUS_FG 2 // Number of clusters for fg GMM Estimation
@@ -104,7 +103,6 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 {
 	int nrows = img.rows;
 	int ncols = img.cols;
-	double energy = 0;
 
 	// Create the graph
 	// Add the nodes
@@ -117,7 +115,6 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 			int diff = abs((int)img.at<uchar>(i - 1, j) - (int)img.at<uchar>(i, j));
 			double weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
 			//std::cout << "weight: " << weight << std::endl;
-			energy += 2*weight;
 			g->add_edge((i - 1)*ncols + j, i*ncols + j, weight, weight);
 		}
 	}
@@ -126,7 +123,6 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 			int diff = abs((int)img.at<uchar>(i, j - 1) - (int)img.at<uchar>(i, j));
 			double weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
 			g->add_edge(i*ncols + (j - 1), i*ncols + j, weight, weight);
-			energy += 2*weight;
 		}
 	}
 	// Add t-links - changes depending on the mask
@@ -136,12 +132,10 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 			// Make sure seeded values won't be cut
 			if (fg_seed.at<uchar>(i, j) > 0) {
 				g->add_tweights(i*ncols + j, KEEP, 0);
-				energy += KEEP;
 			} 
 			else if (fg_mask.at<uchar>(i, j) > 0) {
 				//std::cout << "fg: " << -fg_prob.at<double>(pidx) << std::endl;
 				g->add_tweights(i*ncols + j, -fg_prob.at<double>(pidx), 0);
-				energy += -fg_prob.at<double>(pidx);
 			}
 			if (fg_mask.at<uchar>(i, j) > 0)
 				pidx++;
@@ -153,11 +147,9 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 			// Make sure seeded values won't be cut
 			if (bg_seed.at<uchar>(i, j) > 0) {
 				g->add_tweights(i*ncols + j, 0, KEEP);
-				energy += KEEP;
 			}
 			else if (bg_mask.at<uchar>(i, j) > 0) {
 				g->add_tweights(i*ncols + j, 0, -bg_prob.at<double>(pidx));
-				energy += -bg_prob.at<double>(pidx);
 			}
 			if (bg_mask.at<uchar>(i, j) > 0)
 				pidx++;
@@ -165,8 +157,7 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 	}
 
 	double flow = g->maxflow();
-	std::cout.precision(17);
-	std::cout << "Flow is: " << flow << ", Energy is: " << energy << std::endl;
+	std::cout << "Flow is: " << flow << std::endl;
 }
 
 
