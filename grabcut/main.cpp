@@ -5,17 +5,18 @@
 #include <opencv2/core.hpp>
 #include <opencv2/ml.hpp>
 #include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc/imgproc.hpp"
 
 #include "graph.h"
 #define NUM_CLUS_FG 2 // Number of clusters for fg GMM Estimation
 #define NUM_CLUS_BG 2 // Number of clusters for bg GMM Estimation
-#define LAMBDA 50 // Graph weight parameter
+#define LAMBDA 10 // Graph weight parameter
 #define KEEP 10000000 // Thick edge weight
 #define MAX_ITER 20
 
 typedef Graph<double, double, double> GraphType;
 double beta;
-cv::String fileBase = "../samples/noise_blur_12";
+cv::String fileBase = "../samples/model";
 
 /*
 Calculate beta (graph weight parameter)
@@ -307,14 +308,35 @@ int main(int argc, char** argv)
 	}
 
 	// Checking - creating an image to display results
-	cv::Mat finalImg = cv::Mat::zeros(nrows, ncols, CV_8UC1);
+
+	// Checking - creating an image to display results
+	cv::Mat finalMask = cv::Mat::zeros(nrows, ncols, CV_8UC1);
 	for (int i = 0; i < nrows; i++)
 		for (int j = 0; j < ncols; j++)
-			finalImg.at<uchar>(i, j) = new_fg_mask.at<double>(i, j) ? 255 : 0;
+			finalMask.at<uchar>(i, j) = new_fg_mask.at<double>(i, j) ? 255 : 0;
+	cv::imwrite(fileBase + "_mask.bmp", finalMask);
+
+
+	// Creating overlayed image
+	cv::Mat overlayImg;
+	cv::cvtColor(img, overlayImg, cv::COLOR_GRAY2RGB);
+
+	for (int i = 0; i < nrows; i++) {
+		for (int j = 0; j < ncols; j++) {
+			if (new_fg_mask.at<double>(i, j)) {
+				overlayImg.at<cv::Vec3b>(i, j)[0] = 0;
+				overlayImg.at<cv::Vec3b>(i, j)[1] = 0;
+				overlayImg.at<cv::Vec3b>(i, j)[2] = 255;
+			}
+		}
+	}
+	cv::imwrite(fileBase + "_overlay.png", overlayImg);
+
+
 
 	// Display image
 	cv::namedWindow("Display window", cv::WINDOW_AUTOSIZE); // Create a window for display.
-	cv::imshow("Display window", finalImg);
+	cv::imshow("Display window", overlayImg);
 
 	delete g;
 	std::cout << "Done!";
