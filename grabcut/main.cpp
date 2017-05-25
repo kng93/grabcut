@@ -78,8 +78,24 @@ int getMask(cv::String& fn, cv::Mat& img, cv::Mat& mask)
 /*
 Given the image and mask, change points into a 1D matrix to be passed for GMM training
 */
-void estGMM(cv::Mat& mask, cv::Mat& img, cv::Mat& means, std::vector<cv::Mat>& covs, cv::Mat& weights, int num_clus, bool init = false)
+void estGMM(cv::Mat& mask, cv::Mat& img, cv::Mat& means, std::vector<cv::Mat>& covs, cv::Mat& weights, int num_clus, bool init = false, bool save = false)
 {
+	// Creating files
+	std::ofstream point_file, gmm_file;
+	if (save) {
+		// Points file
+		if (std::ifstream("../gmm_test/fg_points"))
+			point_file.open("../gmm_test/bg_points");
+		else
+			point_file.open("../gmm_test/fg_points");
+
+		// GMM file
+		if (std::ifstream("../gmm_test/fg_gmm"))
+			gmm_file.open("../gmm_test/bg_gmm");
+		else
+			gmm_file.open("../gmm_test/fg_gmm");
+	}
+
 	// Get points
 	cv::Mat sample_points = cv::Mat::zeros(cv::countNonZero(mask), 1, CV_32SC1);
 	int ctr = 0;
@@ -88,8 +104,23 @@ void estGMM(cv::Mat& mask, cv::Mat& img, cv::Mat& means, std::vector<cv::Mat>& c
 			if (mask.at<double>(i, j) > 0) {
 				sample_points.at<int>(ctr) = img.at<uchar>(i, j);
 				ctr++;
+				if (save) // save points into file
+					point_file << (int)img.at<uchar>(i, j) << "\n";
 			}
 		}
+	}
+	
+	// Put prior GMM information into file
+	if (save) {
+		for (int i = 0; i < num_clus; i++)
+			gmm_file << means.at<double>(i, 0) << std::endl;
+		gmm_file << std::endl;
+		for (int i = 0; i < num_clus; i++)
+			gmm_file << weights.at<double>(0, i) << std::endl;
+		gmm_file << std::endl;
+		for (int i = 0; i < num_clus; i++)
+			gmm_file << covs[i].at<double>(0, 0) << std::endl;
+		gmm_file << std::endl << std::endl;
 	}
 
 	cv::Mat likelihoods;
@@ -104,6 +135,22 @@ void estGMM(cv::Mat& mask, cv::Mat& img, cv::Mat& means, std::vector<cv::Mat>& c
 	means = mdl->getMeans();
 	mdl->getCovs(covs);
 	weights = mdl->getWeights();
+
+	// Put after GMM information into file
+	if (save) {
+		for (int i = 0; i < num_clus; i++)
+			gmm_file << means.at<double>(i, 0) << std::endl;
+		gmm_file << std::endl;
+		for (int i = 0; i < num_clus; i++)
+			gmm_file << weights.at<double>(0, i) << std::endl;
+		gmm_file << std::endl;
+		for (int i = 0; i < num_clus; i++)
+			gmm_file << covs[i].at<double>(0, 0) << std::endl;
+	}
+
+	// Close files
+	point_file.close();
+	gmm_file.close();
 
 	// Set the likelihoods to the masks
 	ctr = 0;
@@ -122,6 +169,7 @@ void estGMM(cv::Mat& mask, cv::Mat& img, cv::Mat& means, std::vector<cv::Mat>& c
 			}
 		}
 	}
+
 }
 
 
@@ -235,6 +283,8 @@ double getEnergy(cv::Mat& img, cv::Mat& fg_seed, cv::Mat& fg_mask, cv::Mat& fg_p
 			}
 		}
 	}
+	double ncut_energy = energy;
+	std::cout << "N-Link ENERGY: " << ncut_energy << std::endl;
 
 
 	// t-links
@@ -248,6 +298,8 @@ double getEnergy(cv::Mat& img, cv::Mat& fg_seed, cv::Mat& fg_mask, cv::Mat& fg_p
 				energy += -bg_prob.at<double>(i, j);
 		}
 	}
+
+	std::cout << "T-Link ENERGY: " << (energy-ncut_energy) << std::endl;
 
 	return energy;
 }
@@ -325,11 +377,25 @@ int main(int argc, char** argv)
 			//return -1;
 		}
 
+		// Figuring out increasing energy issue
+		if (iter == 3)
+		{
+
+		}
+
 		std::cout << "Estimating GMMs\n";
 		fg_prob = new_fg_mask.clone();
 		bg_prob = new_bg_mask.clone();
-		estGMM(fg_prob, img, fg_means, fg_covs, fg_weights, NUM_CLUS_FG);
-		estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG);
+
+		// TEMP: Figuring out increasing energy issue
+		if (iter == 3) {
+			estGMM(fg_prob, img, fg_means, fg_covs, fg_weights, NUM_CLUS_FG, false, true);
+			estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG, false, true);
+		}
+		else {
+			estGMM(fg_prob, img, fg_means, fg_covs, fg_weights, NUM_CLUS_FG);
+			estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG);
+		}
 
 		prev_energy = energy;
 		energy = getEnergy(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
