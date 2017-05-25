@@ -8,15 +8,16 @@
 #include "opencv2/imgproc/imgproc.hpp"
 
 #include "graph.h"
-#define NUM_CLUS_FG 2 // Number of clusters for fg GMM Estimation
-#define NUM_CLUS_BG 2 // Number of clusters for bg GMM Estimation
-#define LAMBDA 10 // Graph weight parameter
+#define NUM_CLUS_FG 5 // Number of clusters for fg GMM Estimation
+#define NUM_CLUS_BG 3 // Number of clusters for bg GMM Estimation
+#define LAMBDA 50 // Graph weight parameter
 #define KEEP 10000000 // Thick edge weight
 #define MAX_ITER 20
+#define EIGHT_CON true
 
 typedef Graph<double, double, double> GraphType;
 double beta;
-cv::String fileBase = "../samples/model";
+cv::String fileBase = "../samples/noise_blur_12";
 
 /*
 Calculate beta (graph weight parameter)
@@ -139,15 +140,29 @@ void createGraph(GraphType *g, cv::Mat& img, cv::Mat& fg_seed, cv::Mat& bg_seed,
 		g->add_node();
 
 	// Add [n-links = e(-diff)] - will be the same for every graph
-	for (int j = 0; j < ncols; j++) { // across cols
+	for (int j = 0; j < ncols; j++) { // across rows
 		for (int i = 1; i < nrows; i++) {
 			int diff = abs((int)img.at<uchar>(i - 1, j) - (int)img.at<uchar>(i, j));
 			double weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
-			//std::cout << "weight: " << weight << std::endl;
 			g->add_edge((i - 1)*ncols + j, i*ncols + j, weight, weight);
+
+			// if 8-econnected
+			if (EIGHT_CON) {
+				if (j < (ncols - 1)) { // if it's not the last column, add right-top (starting at i = 1 so don't have to check)
+					diff = abs((int)img.at<uchar>(i - 1, j + 1) - (int)img.at<uchar>(i, j));
+					weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
+					g->add_edge((i - 1)*ncols + (j + 1), i*ncols + j, weight, weight); // weight different
+				}
+
+				if (j > 0) {  // if it's not the first column, add left-top (starting at i=1 so don't have to check)
+					diff = abs((int)img.at<uchar>(i - 1, j - 1) - (int)img.at<uchar>(i, j));
+					weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
+					g->add_edge((i - 1)*ncols + (j - 1), i*ncols + j, weight, weight); // weight different
+				}
+			}
 		}
 	}
-	for (int i = 0; i < nrows; i++) { // across rows
+	for (int i = 0; i < nrows; i++) { // across cols
 		for (int j = 1; j < ncols; j++) {
 			int diff = abs((int)img.at<uchar>(i, j - 1) - (int)img.at<uchar>(i, j));
 			double weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
@@ -178,26 +193,44 @@ double getEnergy(cv::Mat& img, cv::Mat& fg_seed, cv::Mat& fg_mask, cv::Mat& fg_p
 {
 	int nrows = fg_mask.rows;
 	int ncols = fg_mask.cols;
-	double energy = 0;
+	int diff;
+	double energy = 0, weight;
 
 
 	// n-links
-	for (int j = 0; j < ncols; j++) { // across cols
+	for (int j = 0; j < ncols; j++) { // across rows
 		for (int i = 1; i < nrows; i++) {
 			// Check if edge was cut
 			if (fg_mask.at<double>(i - 1, j) != fg_mask.at<double>(i, j)) {
-				int diff = abs((int)img.at<uchar>(i - 1, j) - (int)img.at<uchar>(i, j));
-				double weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
+				diff = abs((int)img.at<uchar>(i - 1, j) - (int)img.at<uchar>(i, j));
+				weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
 				energy += weight;
+			}
+			
+			// If 8-connected
+			if (EIGHT_CON) {
+				// right-top diagonals
+				if (j < (ncols - 1) && (fg_mask.at<double>(i - 1, j + 1) != fg_mask.at<double>(i, j))) {
+					diff = abs((int)img.at<uchar>(i - 1, j + 1) - (int)img.at<uchar>(i, j));
+					weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
+					energy += weight;
+				}
+
+				// left-top diagons
+				if (j > 0 && (fg_mask.at<double>(i - 1, j - 1) != fg_mask.at<double>(i, j))) {
+					diff = abs((int)img.at<uchar>(i - 1, j - 1) - (int)img.at<uchar>(i, j));
+					weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
+					energy += weight;
+				}
 			}
 		}
 	}
-	for (int i = 0; i < nrows; i++) { // across rows
+	for (int i = 0; i < nrows; i++) { // across cols
 		for (int j = 1; j < ncols; j++) {
 			// Check if edge was cut
 			if (fg_mask.at<double>(i, j - 1) != fg_mask.at<double>(i, j)) {
-				int diff = abs((int)img.at<uchar>(i, j - 1) - (int)img.at<uchar>(i, j));
-				double weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
+				diff = abs((int)img.at<uchar>(i, j - 1) - (int)img.at<uchar>(i, j));
+				weight = diff > 0 ? LAMBDA*exp(-beta*(diff*diff)) : KEEP;
 				energy += weight;
 			}
 		}
@@ -258,6 +291,11 @@ int main(int argc, char** argv)
 	estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG, true);
 	getEnergy(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
 
+	if (EIGHT_CON)
+		std::cout << "Running 8-con Graph\n\n";
+	else
+		std::cout << "Running 4-con Graph\n\n";
+
 	double prev_energy = 0, energy = -1;
 	int iter = 0;
 	while (iter < MAX_ITER) {
@@ -279,11 +317,12 @@ int main(int argc, char** argv)
 		}
 		prev_energy = energy;
 		energy = getEnergy(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
+		std::cout.precision(17);
 		std::cout << "Graph Energy is: " << energy << std::endl << std::endl;
 		if ((prev_energy >= 0) && (prev_energy < energy)) {
 			std::cout << "ERROR: ENERGY INCREASED.";
-			system("pause");
-			return -1;
+			//system("pause");
+			//return -1;
 		}
 
 		std::cout << "Estimating GMMs\n";
@@ -297,13 +336,13 @@ int main(int argc, char** argv)
 		std::cout << "GMM Energy is: " << energy << std::endl << std::endl;
 		if ((prev_energy >= 0) && (prev_energy < energy)) {
 			std::cout << "ERROR: ENERGY INCREASED.";
-			system("pause");
-			return -1;
+			//system("pause");
+			//return -1;
 		}
 
 		iter++;
 		g->reset(); // Reset the graph so don't have to allocate memory again
-		if (prev_energy - energy < 0.1)
+		if (abs(prev_energy - energy) < 0.01)
 			break;
 	}
 
