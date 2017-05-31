@@ -138,7 +138,6 @@ int run_opencv()
 	int nrows = img.rows;
 	int ncols = img.cols;
 	GraphType *g = new GraphType(/*estimated # of nodes*/ nrows*ncols, /*estimated # of edges*/ nrows*ncols * 3);
-	calcBeta<cv::Mat>(img, nrows, ncols); // Set the beta value
 	cv::Mat fg_means, bg_means; // mat for GMM means
 	std::vector<cv::Mat> fg_covs, bg_covs; // mat for GMM covs
 	cv::Mat fg_weights, bg_weights; // weights for GMM means
@@ -162,7 +161,7 @@ int run_opencv()
 	cv::Mat bg_prob = new_bg_mask.clone();
 	ocv_estGMM(fg_prob, img, fg_means, fg_covs, fg_weights, NUM_CLUS_FG, true);
 	ocv_estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG, true);
-	getEnergy<cv::Mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
+	getEnergy<cv::Mat, cv::Mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
 
 	if (EIGHT_CON)
 		std::cout << "Running 8-con Graph\n\n";
@@ -171,10 +170,10 @@ int run_opencv()
 
 	double prev_energy = 0, energy = -1;
 	int iter = 0;
-	while (iter < MAX_ITER) {
+	while (iter < MAX_RUNS) {
 		std::cout << "RUN #" << iter << "\n=========================\n";
 		std::cout << "Creating Graph\n";
-		createGraph<cv::Mat>(g, img, fg_mask, bg_mask, fg_prob, bg_prob);
+		createGraph<cv::Mat, cv::Mat>(g, img, fg_mask, bg_mask, fg_prob, bg_prob);
 
 		// Reset the masks
 		std::cout << "Recalculating foreground/background\n";
@@ -189,7 +188,7 @@ int run_opencv()
 			}
 		}
 		prev_energy = energy;
-		energy = getEnergy<cv::Mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
+		energy = getEnergy<cv::Mat, cv::Mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
 		std::cout.precision(17);
 		std::cout << "Graph Energy is: " << energy << std::endl << std::endl;
 		if ((prev_energy >= 0) && (prev_energy < energy)) {
@@ -207,7 +206,7 @@ int run_opencv()
 		ocv_estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG);
 
 		prev_energy = energy;
-		energy = getEnergy<cv::Mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
+		energy = getEnergy<cv::Mat, cv::Mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
 		std::cout << "GMM Energy is: " << energy << std::endl << std::endl;
 		if ((prev_energy >= 0) && (prev_energy < energy)) {
 			std::cout << "ERROR: ENERGY INCREASED.";
