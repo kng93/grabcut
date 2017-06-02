@@ -180,7 +180,7 @@ int run_arma()
 	arma::mat bg_prob = new_bg_mask;
 	arm_estGMM(fg_prob, img, fg_means, fg_covs, fg_weights, NUM_CLUS_FG, true);
 	arm_estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG, true);
-	getEnergy<arma::Mat<short>, arma::mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
+	getEnergy<arma::Mat<short>, arma::mat>(img, new_fg_mask, fg_prob, new_bg_mask, bg_prob);
 
 	if (EIGHT_CON)
 		std::cout << "Running 8-con Graph\n\n";
@@ -207,7 +207,7 @@ int run_arma()
 			}
 		}
 		prev_energy = energy;
-		energy = getEnergy<arma::Mat<short>, arma::mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
+		energy = getEnergy<arma::Mat<short>, arma::mat>(img, new_fg_mask, fg_prob, new_bg_mask, bg_prob);
 		std::cout.precision(17);
 		std::cout << "Graph Energy is: " << energy << std::endl << std::endl;
 		if ((prev_energy >= 0) && (prev_energy < energy)) {
@@ -225,7 +225,7 @@ int run_arma()
 		arm_estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG);
 
 		prev_energy = energy;
-		energy = getEnergy<arma::Mat<short>, arma::mat>(img, fg_mask, new_fg_mask, fg_prob, bg_mask, new_bg_mask, bg_prob);
+		energy = getEnergy<arma::Mat<short>, arma::mat>(img, new_fg_mask, fg_prob, new_bg_mask, bg_prob);
 		std::cout << "GMM Energy is: " << energy << std::endl << std::endl;
 		if ((prev_energy >= 0) && (prev_energy < energy)) {
 			std::cout << "ERROR: ENERGY INCREASED.";

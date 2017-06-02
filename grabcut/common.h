@@ -2,19 +2,18 @@
 #include <string>
 #include "graph.h"
 
-#define NUM_CLUS_FG 2 // Number of clusters for fg GMM Estimation
-#define NUM_CLUS_BG 2 // Number of clusters for bg GMM Estimation
+#define NUM_CLUS_FG 5 // Number of clusters for fg GMM Estimation
+#define NUM_CLUS_BG 3 // Number of clusters for bg GMM Estimation
 #define LAMBDA 50 // Graph weight parameter
 #define KEEP 10000000 // Thick edge weight
 #define MAX_RUNS 20
 #define EIGHT_CON true
 // Define library to use [OCV, ARM]
-//#define OCV
-#define ARM
+#define OCV
 
 // 
 typedef Graph<double, double, double> GraphType;
-std::string fileBase = "../samples/pigfoot";
+std::string fileBase = "../samples/noise_blur_12";
 
 /* Depending on library, different way of accessing the matrix */
 template<typename datatype, typename paramtype>
@@ -144,10 +143,10 @@ void createGraph(GraphType *g, imgtype& img, imgtype& fg_seed, imgtype& bg_seed,
 		for (int j = 0; j < ncols; j++) {
 			// Make sure seeded values won't be cut
 			if (getPix<imgtype, uchar>(fg_seed, i, j) > 0) {
-				g->add_tweights(i*ncols + j, KEEP, 0);
+				g->add_tweights(i*ncols + j, KEEP, -getPix<datatype, double>(fg_prob, i, j));
 			}
 			else if (getPix<imgtype, uchar>(bg_seed, i, j) > 0) {
-				g->add_tweights(i*ncols + j, 0, KEEP);
+				g->add_tweights(i*ncols + j, -getPix<datatype, double>(bg_prob, i, j), KEEP);
 			}
 			else {
 				g->add_tweights(i*ncols + j, -getPix<datatype, double>(bg_prob, i, j), -getPix<datatype, double>(fg_prob, i, j));
@@ -160,7 +159,7 @@ void createGraph(GraphType *g, imgtype& img, imgtype& fg_seed, imgtype& bg_seed,
 }
 
 template <typename imgtype, typename datatype>
-double getEnergy(imgtype& img, imgtype& fg_seed, datatype& fg_mask, datatype& fg_prob, imgtype& bg_seed, datatype& bg_mask, datatype& bg_prob)
+double getEnergy(imgtype& img, datatype& fg_mask, datatype& fg_prob, datatype& bg_mask, datatype& bg_prob)
 {
 	int nrows = numRows<imgtype>(img);
 	int ncols = numCols<imgtype>(img);
@@ -214,9 +213,7 @@ double getEnergy(imgtype& img, imgtype& fg_seed, datatype& fg_mask, datatype& fg
 	// t-links
 	for (int i = 0; i < nrows; i++) {
 		for (int j = 0; j < ncols; j++) {
-			if ((getPix<imgtype, uchar>(fg_seed, i, j) > 0) || (getPix<imgtype, uchar>(bg_seed, i, j) > 0))
-				energy = energy;
-			else if (getPix<datatype, double>(fg_mask, i, j) > 0)
+			if (getPix<datatype, double>(fg_mask, i, j) > 0)
 				energy += -getPix<datatype, double>(fg_prob, i, j);
 			else
 				energy += -getPix<datatype, double>(bg_prob, i, j);
