@@ -202,14 +202,9 @@ int run_opencv()
 		bg_prob = new_bg_mask.clone();
 
 		// TEMP: Figuring out increasing energy issue
-		if (iter == 4) {
-			ocv_estGMM(fg_prob, img, fg_means, fg_covs, fg_weights, NUM_CLUS_FG, false, true);
-			ocv_estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG, false, true);
-		}
-		else {
-			ocv_estGMM(fg_prob, img, fg_means, fg_covs, fg_weights, NUM_CLUS_FG);
-			ocv_estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG);
-		}
+		ocv_estGMM(fg_prob, img, fg_means, fg_covs, fg_weights, NUM_CLUS_FG);
+		ocv_estGMM(bg_prob, img, bg_means, bg_covs, bg_weights, NUM_CLUS_BG);
+
 		prev_energy = energy;
 		energy = getEnergy<cv::Mat, cv::Mat>(img, new_fg_mask, fg_prob, new_bg_mask, bg_prob);
 		std::cout << "GMM Energy is: " << energy << std::endl << std::endl;
